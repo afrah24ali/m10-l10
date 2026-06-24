@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+venv
+api/.venv
+web/.next
+web/node_modules
+web/.svelte-kit
+tests
+pytest.ini
+.pytest_cache
+*.log

@@ -9,7 +9,9 @@ The generator call uses `do_sample=False` so retrieval and metric
 reproducibility hold across runs.
 """
 import re
-from typing import Tuple
+from typing import Any, Tuple
+
+from .models import Citation, RAGResponse, SENTINEL_ANSWER
 
 PROMPT_TEMPLATE = """\
 You are answering a recipe question. Use ONLY the numbered sources below.
@@ -31,10 +33,15 @@ def assemble_prompt(question: str, chunks: list[dict]) -> Tuple[str, dict[int, d
 
     Returns (prompt_str, {citation_index: chunk_dict}).
     """
-    # TODO: walk the chunks list, build numbered source lines, and call
-    #       PROMPT_TEMPLATE.format(...). Return the prompt string and the
-    #       index→chunk mapping. Index starts at 1, not 0.
-    raise NotImplementedError
+    sources = []
+    numbered = {}
+    for i, chunk in enumerate(chunks, 1):
+        numbered[i] = chunk
+        sources.append(f"[{i}] {chunk.get('text', '')}")
+    
+    sources_str = "\n".join(sources)
+    prompt_str = PROMPT_TEMPLATE.format(sources=sources_str, question=question)
+    return prompt_str, numbered
 
 
 def extract_citations(answer: str, numbered: dict[int, dict]) -> list[dict]:
@@ -44,10 +51,23 @@ def extract_citations(answer: str, numbered: dict[int, dict]) -> list[dict]:
     indices that are present in `numbered` are returned; duplicates are
     de-duplicated.
     """
-    # TODO: iterate CITATION_PATTERN.finditer(answer), look up each index
-    #       in `numbered`, and emit one {"chunk_id", "score"} dict per
-    #       unique index that maps to a real retrieved chunk.
-    raise NotImplementedError
+    seen_chunk_ids = set()
+    citations = []
+    
+    for match in CITATION_PATTERN.finditer(answer):
+        index = int(match.group(1))
+        if index in numbered:
+            chunk = numbered[index]
+            chunk_id = chunk["chunk_id"]
+            if chunk_id not in seen_chunk_ids:
+                seen_chunk_ids.add(chunk_id)
+                distance = chunk.get("_additional", {}).get("distance", 0.0)
+                score = max(0.0, min(1.0, 1.0 - distance))
+                citations.append({
+                    "chunk_id": chunk_id,
+                    "score": score
+                })
+    return citations
 
 
 def compose_rag(question: str, embedder, weaviate_client, generator, k: int = 4) -> dict:
@@ -63,15 +83,67 @@ def compose_rag(question: str, embedder, weaviate_client, generator, k: int = 4)
       confidence=0.0. (This is the "refuse rather than hallucinate"
       rule the autograder enforces.)
     """
-    # TODO:
-    # 1. Encode `question` with `embedder` and query Weaviate via
-    #    `with_near_vector` for top-k chunks (the Weaviate class is
-    #    `vectorizer=none`, so `with_near_text` would fail at runtime).
-    # 2. If retrieved == [], return the sentinel-shaped dict.
-    # 3. assemble_prompt(question, retrieved) → (prompt, numbered).
-    # 4. Run the generator with do_sample=False and max_new_tokens=256.
-    # 5. extract_citations(raw, numbered).
-    # 6. If no citations resolved → return the sentinel-shaped dict.
-    # 7. confidence = mean(citation scores), clipped to [0, 1].
-    # 8. Return {"answer": raw, "citations": citations, "confidence": confidence}.
-    raise NotImplementedError
+    # 1. Encode `question` with `embedder`
+    vector = embedder.encode(question).tolist()
+
+    # 2. Query Weaviate
+    res = weaviate_client.query.get("Chunk", ["text", "chunk_id"])\
+        .with_near_vector({"vector": vector})\
+        .with_additional(["distance"])\
+        .with_limit(k)\
+        .do()
+
+    chunks = []
+    try:
+        chunks = res["data"]["Get"]["Chunk"] or []
+    except (KeyError, TypeError):
+        pass
+
+    if not chunks:
+        return {
+            "answer": SENTINEL_ANSWER,
+            "citations": [],
+            "confidence": 0.0
+        }
+
+    # 3. Assemble prompt
+    prompt, numbered = assemble_prompt(question, chunks)
+
+    # 4. Generate answer
+    gen_res = generator(prompt, max_new_tokens=256, do_sample=False)
+    answer_text = gen_res[0]["generated_text"].strip()
+
+    # 5. Extract citations
+    citations = extract_citations(answer_text, numbered)
+
+    # 6. Grounding refusal
+    if not citations or SENTINEL_ANSWER.lower() in answer_text.lower():
+        return {
+            "answer": SENTINEL_ANSWER,
+            "citations": [],
+            "confidence": 0.0
+        }
+
+    # 7. Confidence score
+    scores = [c["score"] for c in citations]
+    confidence = sum(scores) / len(scores) if scores else 0.0
+    confidence = max(0.0, min(1.0, confidence))
+
+    # 8. Return dict
+    return {
+        "answer": answer_text,
+        "citations": citations,
+        "confidence": confidence
+    }
+
+
+def answer_question(
+    question: str,
+    k: int,
+    weaviate_client: Any,
+    generator: Any,
+    embedder: Any,
+) -> RAGResponse:
+    res = compose_rag(question, embedder, weaviate_client, generator, k)
+    return RAGResponse(**res)
+
