@@ -1,22 +1,39 @@
-"""spaCy-backed entity extraction.
+"""spaCy NLP helpers for entity extraction."""
 
-Used by the /extract path operation. The spaCy pipeline is constructed
-once in `main.lifespan` and resolved via `Depends(get_nlp)` — do not
-load the pipeline inside this module's functions.
-"""
+import spacy
+from spacy.language import Language
+
 from .models import Entity
 
 
-def extract_entities(text: str, nlp) -> list[Entity]:
-    """Run spaCy NER on `text` and return entities ordered by `start`.
+_NLP: Language | None = None
 
-    Inputs:
-        text — input string.
-        nlp — loaded spaCy pipeline (passed in; do not load here).
-    Returns:
-        list[Entity] ordered by `start` ascending (the Evaluation
-        Methodology requires monotonic non-decreasing `start`).
-    """
-    # TODO: call `doc = nlp(text)`, build Entity instances from
-    #       `doc.ents`, and sort the result by `start` before returning.
-    raise NotImplementedError
+
+def load_pipeline(model_name: str = "en_core_web_sm") -> Language:
+    global _NLP
+
+    if _NLP is None:
+        _NLP = spacy.load(model_name)
+
+    return _NLP
+
+
+def extract_entities(text: str, nlp: Language | None = None) -> list[Entity]:
+    pipeline=nlp or _NLP
+
+    if pipeline is None:
+        raise RuntimeError("spaCy pipeline has not been loaded")
+
+    doc = pipeline(text)
+
+    entities = [
+        Entity(
+            text=ent.text,
+            label=ent.label_,
+            start=ent.start_char,
+            end=ent.end_char,
+        )
+        for ent in doc.ents
+    ]
+
+    return sorted(entities, key=lambda entity: entity.start)

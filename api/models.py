@@ -4,10 +4,13 @@ These are the typed-boundary contracts. They must mirror the TypeScript
 interfaces in `web/lib/types.ts` exactly — drift produces silent render
 failures in the Next.js frontend.
 """
-from typing import List, Literal
 
-from pydantic import BaseModel, Field
+from typing import Any, Literal
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+SENTINEL_ANSWER = "I cannot answer this from the available sources"
 
 # --- /extract --------------------------------------------------------
 
@@ -17,10 +20,16 @@ class ExtractRequest(BaseModel):
     The request field has a length constraint that gates 422 on empty
     or oversized input.
     """
-    # TODO: declare the request body field with a Field(...) length
-    #       constraint.
-    pass
+    model_config = ConfigDict(extra="forbid")
 
+    text: str = Field(..., min_length=1, max_length=5000)
+
+    @field_validator("text")
+    @classmethod
+    def text_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("text must not be empty")
+        return value
 
 class Entity(BaseModel):
     """A single named-entity span.
@@ -28,9 +37,12 @@ class Entity(BaseModel):
     Field names must match the corresponding TypeScript Entity
     interface in `web/lib/types.ts` exactly.
     """
-    # TODO: declare the span's text, label, and start/end character
-    #       offsets.
-    pass
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    label: str
+    start: int
+    end: int
 
 
 class ExtractResponse(BaseModel):
@@ -39,33 +51,45 @@ class ExtractResponse(BaseModel):
     Per the Evaluation Methodology, the returned list is ordered by
     start offset ascending.
     """
-    # TODO: declare the field that carries the ordered list of entities.
-    pass
+    model_config = ConfigDict(extra="forbid")
+
+    entities: list[Entity]
 
 
 # --- /kg/query -------------------------------------------------------
 
 class KGRequest(BaseModel):
-    """Request body for POST /kg/query.
+    """Request body for POST /kg/query."""
 
-    The question field has a length constraint.
-    """
-    # TODO: declare the request field with a Field(...) length
-    #       constraint.
-    pass
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(..., min_length=1, max_length=500)
+
+    @field_validator("question")
+    @classmethod
+    def question_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("question must not be empty")
+        return value
 
 
 class KGResponse(BaseModel):
     """Response body for POST /kg/query."""
-    # TODO: declare the cypher string, the rows the driver returned,
-    #       and the row count.
-    pass
+
+    model_config = ConfigDict(extra="forbid")
+
+    cypher: str
+    rows: list[dict[str, Any]]
+    count: int
 
 
 class UnsupportedQueryDetail(BaseModel):
     """Structured detail returned on 422 from /kg/query."""
+
+    model_config = ConfigDict(extra="forbid")
+
     reason: Literal["unsupported_question"]
-    supported_patterns: List[str]
+    supported_patterns: list[str]
 
 
 # --- /rag/answer -----------------------------------------------------
@@ -76,9 +100,17 @@ class RAGRequest(BaseModel):
     The question field has a length constraint; `k` is a bounded
     integer with a default.
     """
-    # TODO: declare the question field with a Field(...) length
-    #       constraint and a bounded integer `k` with a default.
-    pass
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(..., min_length=1, max_length=500)
+    k: int = Field(default=4, ge=1, le=10)
+
+    @field_validator("question")
+    @classmethod
+    def question_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("question must not be blank")
+        return value
 
 
 class Citation(BaseModel):
@@ -86,30 +118,50 @@ class Citation(BaseModel):
 
     Field names must match the TypeScript Citation interface.
     """
-    # TODO: declare the citation's chunk identifier and retrieval score.
-    pass
+    model_config = ConfigDict(extra="forbid")
+
+    chunk_id: int
+    score: float
 
 
 class RAGResponse(BaseModel):
     """Response body for POST /rag/answer.
 
-    Grounding contract: when `answer` is not the empty-retrieval
-    sentinel, `len(citations) > 0` is required.
+    Grounding contract: when grounded is true, citations must not be empty.
     """
-    # TODO: declare the answer string, the list of citations, and the
-    #       confidence score.
-    pass
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str
+    citations: list[Citation]
+    confidence: float = Field(..., ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def enforce_grounding_contract(self) -> "RAGResponse":
+        if self.answer == SENTINEL_ANSWER:
+            if self.citations:
+                raise ValueError("sentinel response must not include citations")
+            if self.confidence != 0.0:
+                raise ValueError("sentinel response confidence must be 0.0")
+        elif not self.citations:
+            raise ValueError("non-sentinel answers must include citations")
+
+        return self
 
 
 # --- Health / readiness ---------------------------------------------
 
 class HealthResponse(BaseModel):
     """Liveness response."""
-    # TODO: declare the single field returned by /healthz.
-    pass
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["ok"]
 
 
 class ReadyDetail(BaseModel):
     """Readiness detail naming each backend's status."""
-    neo4j: str
-    weaviate: str
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    neo4j: bool
+    weaviate: bool
+    errors: list[str] = []
