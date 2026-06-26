@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { useRouter } from "next/router";
+import { authFetch } from "../lib/api";
+import type { ExtractResponse } from "../lib/types";
 
 // TODO: import { RAGResponse } from "../lib/types".
-
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function RagPage() {
