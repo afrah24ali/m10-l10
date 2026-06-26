@@ -37,6 +37,7 @@ export interface RAGResponse {
   answer: string;
   citations: Citation[];
   grounded: boolean;
+  confidence: number;
 }
 
 export interface HealthResponse {

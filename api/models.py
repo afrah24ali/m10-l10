@@ -81,6 +81,7 @@ class RAGResponse(BaseModel):
     answer: str
     citations: List[Citation]
     grounded: bool
+    confidence: float
 
 
 # --- Health / readiness ---------------------------------------------
