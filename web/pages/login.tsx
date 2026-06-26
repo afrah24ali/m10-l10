@@ -10,10 +10,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState("demo");
   const [error, setError] = useState("");
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
+ async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  event.preventDefault();
+  setError("");
 
+  try {
     const res = await fetch(`${API_URL}/auth/login`, {
       method: "POST",
       headers: {
@@ -23,7 +24,7 @@ export default function LoginPage() {
     });
 
     if (!res.ok) {
-      setError("Login failed");
+      setError("Login failed. Check username and password.");
       return;
     }
 
@@ -31,7 +32,10 @@ export default function LoginPage() {
     localStorage.setItem("access_token", data.access_token);
 
     router.push("/extract");
+  } catch {
+    setError(`Cannot connect to backend at ${API_URL}. Make sure FastAPI is running.`);
   }
+}
 
   return (
     <main>
